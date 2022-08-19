@@ -1,0 +1,46 @@
+---
+title: 'EDA'
+subtitle: 'TV+ MMM'
+author: 'AMP'
+date: "Run Date: `r format(Sys.Date(), '%d %B %Y')`"
+knit: (function(inputFile, encoding) { script_path <- rstudioapi::getSourceEditorContext()$path; output_dir <- paste0(dirname(dirname(script_path)), "/output/"); rmarkdown::render(inputFile, output_dir = output_dir) })
+header-includes:
+  - \geometry{paperwidth=300mm}
+  - \color{black}
+  - \usepackage{fontspec, lipsum}
+  - \setmainfont{SF Pro Text}
+  - \pagenumbering{gobble}
+output: 
+  pdf_document:
+    latex_engine: xelatex
+    highlight: zenburn
+    fig_caption: true
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(RColorBrewer)
+library(tibble)
+library(tidyr)
+library(tidytext)
+library(kableExtra)
+```
+
+```{r orientation, echo=FALSE}
+script_path <- rstudioapi::getSourceEditorContext()$path
+output_dir <- paste0(dirname(dirname(script_path)), "/output")
+
+pics <- list.files(output_dir, full.names = TRUE)
+pics <- pics[grepl("\\.png", pics)]
+names(pics) <- pics
+```
+
+```{r west, echo=F, fig.align='center', out.width='100%', results='asis'}
+knitr::include_graphics(pics)
+```
+
+\vspace*{1cm}
