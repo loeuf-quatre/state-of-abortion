@@ -7,11 +7,17 @@
 # Housekeeping ----------------------------------------------------------------
 
 library(dplyr) # Wrangling
+library(glue) # String pasting
 library(janitor) # Formatting
 library(knitr) # Inline tables
+library(osfr) # Read/write OSF projects
 library(purrr) # Iterative functions
 library(rvest) # Web scraping
 library(tidyr) # Wrangling
+
+ # OSF authentication. Project location https://osf.io/nt5fd/
+pat <- keyring::key_get('OSF')
+osf_auth(token = pat)
 
 # Tidy data -------------------------------------------------------------------
 
@@ -68,36 +74,45 @@ regs <- regs %>%
     state
   )
 
-kable(head(regs, 25), "simple")
+"
+Compare California and Texas across Guttmacher's tracked abortion regulations
+"
 
-# state   regulation                                                                      state_law 
-# ------  ------------------------------------------------------------------------------  ----------
-# AK      must_be_performed_by_a_licensed_physician                                       X         
-# AK      must_be_performed_in_a_hospital_if_at                                           NA        
-# AK      second_physician_must_participate_if_at                                         NA        
-# AK      prohibited_except_in_cases_of_life_or_health_endangerment_if_at                 NA        
-# AK      partial_birth_abortion_banned                                                   ▼         
-# AK      public_funding_of_abortion_funds_all_or_most_medically_necessary_abortions      X         
-# AK      public_funding_of_abortion_funds_limited_to_life_endangerment_rape_and_incest   NA        
-# AK      private_insurance_coverage_limited                                              NA        
-# AK      providers_may_refuse_to_participate_individual                                  X         
-# AK      providers_may_refuse_to_participate_institution                                 Private   
-# AK      mandated_counseling_includes_information_on_breast_cancer_link                  X         
-# AK      mandated_counseling_includes_information_on_fetal_pain                          X         
-# AK      mandated_counseling_includes_information_on_negative_psychological_effects      NA        
-# AK      waiting_period_in_hours_after_counseling                                        NA        
-# AK      parental_involvement_required_for_minors                                        ▼         
-# AL      must_be_performed_by_a_licensed_physician                                       X         
-# AL      must_be_performed_in_a_hospital_if_at                                           Viability 
-# AL      second_physician_must_participate_if_at                                         Viability 
-# AL      prohibited_except_in_cases_of_life_or_health_endangerment_if_at                 0 weeks   
-# AL      partial_birth_abortion_banned                                                   ▼         
-# AL      public_funding_of_abortion_funds_all_or_most_medically_necessary_abortions      NA        
-# AL      public_funding_of_abortion_funds_limited_to_life_endangerment_rape_and_incest   X         
-# AL      private_insurance_coverage_limited                                              NA        
-# AL      providers_may_refuse_to_participate_individual                                  NA        
-# AL      providers_may_refuse_to_participate_institution                                 NA        
-  
+regs %>%
+  filter(
+    state %in% c("CA", "TX")
+  ) %>%
+  pivot_wider(
+    names_from = state,
+    values_from = state_law
+  ) %>%
+  kable(
+    "simple",
+    align = c("r", "c", "c")
+  )
+
+#                                                                     regulation      CA                TX         
+# ------------------------------------------------------------------------------  -----------  --------------------
+#                                      must_be_performed_by_a_licensed_physician      NA                X          
+#                                          must_be_performed_in_a_hospital_if_at      NA                NA         
+#                                        second_physician_must_participate_if_at      NA                NA         
+#                prohibited_except_in_cases_of_life_or_health_endangerment_if_at   Viability        0 weeks‡*      
+#                                                  partial_birth_abortion_banned      NA                X          
+#     public_funding_of_abortion_funds_all_or_most_medically_necessary_abortions       X                NA         
+#  public_funding_of_abortion_funds_limited_to_life_endangerment_rape_and_incest      NA                X          
+#                                             private_insurance_coverage_limited      NA                X          
+#                                 providers_may_refuse_to_participate_individual       X                X          
+#                                providers_may_refuse_to_participate_institution   Religious         Private       
+#                 mandated_counseling_includes_information_on_breast_cancer_link      NA                X          
+#                         mandated_counseling_includes_information_on_fetal_pain      NA                X          
+#     mandated_counseling_includes_information_on_negative_psychological_effects      NA                X          
+#                                       waiting_period_in_hours_after_counseling      NA                24         
+#                                       parental_involvement_required_for_minors       ▼        Consent and Notice
+                                      
+"
+Observe current state law category levels within each regulation
+"
+
 regs %>%
   group_by(
     regulation
@@ -130,11 +145,12 @@ regs %>%
 # Condense factor levels ----------------------------------
 
 affirmed <- "grepl('X|Private|Religious', state_law)"
-excepted <- "grepl('†|‡|Ω|ϴ|Only', state_law)"
+excepted <- "grepl('\\\\*|†|‡|Ω|ϴ|Only', state_law)"
 enjoined <- "grepl('▼|§', state_law)"
 
-first_tri <- "grepl('0 weeks|6 weeks|14 weeks|15 weeks', state_law)"
-second_tri <- "grepl('20 weeks|22 weeks|24 weeks|2nd trimester|iability', state_law)"
+first_tri <- "grepl('^0 weeks|^6 weeks|14 weeks|15 weeks', state_law)"
+second_tri <- "'20 weeks|22 weeks|24 weeks|2nd trimester|iability'"
+second_tri <- glue("grepl({second_tri}, state_law)")
 third_tri <- "state_law == '3rd trimester'"
 
 consent <- "grepl('Consent', state_law)"
@@ -155,37 +171,112 @@ f1 <- tibble::lst(
   waiting,
   waiting_period
 )
+f1 <- map(f1, ~ parse_expr(.x))
 
-f1 <- lapply(f1, function(x) parse_expr(x))
-f1 <- list2env(f1, env = .GlobalEnv)
+list2env(f1, env = .GlobalEnv)
 
 regs <- regs %>%
   mutate(
     state_law = trimws(state_law),
     status = case_when(
       !!affirmed ~ "yes",
-      !!exception ~ "exception",
+      !!excepted ~ "exception",
       !!enjoined ~ "enjoined"
     ),
     timing = case_when(
-      !!first_tri ~ "first_trimester",
-      !!second_tri ~ "second_trimester"
+      !!first_tri  ~ "first_trimester",
+      !!second_tri ~ "second_trimester",
+      !!third_tri  ~ "third_trimester"
     ),
     consent = case_when(
       !!consent & !!notice ~ "consent_and_notice",
-      !!consent ~ "consent",
-      !!notice ~ "notice"
+      !!consent            ~ "consent",
+      !!notice             ~ "notice"
     ),
     waiting = case_when(
       !!waiting & !!waiting_period ~ "yes"
     )
-  ) %>%
+  )
+
+regs <- regs %>%
   unite(
     "state_law_condensed", 
     status:waiting, 
     sep = "__", 
     na.rm = TRUE
+  )
+
+"
+Confirm mapping fidelity
+"
+
+regs %>%
+  select(
+    state_law,
+    state_law_condensed
   ) %>%
+  distinct() %>%
+  arrange(
+    state_law
+  ) %>%
+  kable(
+    "simple"
+  )
+
+# state_law            state_law_condensed         
+# -------------------  ----------------------------
+# §                    enjoined                    
+# ▼                    enjoined                    
+# 0 weeks              first_trimester             
+# 0 weeks*,‡           exception__first_trimester  
+# 0 weeks†             exception__first_trimester  
+# 0 weeks‡             exception__first_trimester  
+# 0 weeks‡,Ω           exception__first_trimester  
+# 0 weeks‡*            exception__first_trimester  
+# 14 weeks             first_trimester             
+# 15 weeks             first_trimester             
+# 18                   yes                         
+# 20 weeks             second_trimester            
+# 20 weeks*            exception__second_trimester 
+# 22 weeks*            exception__second_trimester 
+# 24                   yes                         
+# 24 weeks             second_trimester            
+# 24 weeks*            exception__second_trimester 
+# 24 weeksΩ            exception__second_trimester 
+# 2nd trimester        second_trimester            
+# 3rd trimester        third_trimester             
+# 48                   yes                         
+# 6 weeks*             exception__first_trimester  
+# 6 weeks†             exception__first_trimester  
+# 72                   yes                         
+# 72◊                  yes                         
+# Consent              consent                     
+# Consent and Notice   consent_and_notice          
+# Consentþ             consent                     
+# Consentβ             consent                     
+# Consentξ             consent                     
+# Life Only            exception                   
+# Notice               notice                      
+# Noticeβ              notice                      
+# Noticeξ              notice                      
+# Postviability        second_trimester            
+# Private              yes                         
+# Religious            yes                         
+# Viability            second_trimester            
+# Viability*           exception__second_trimester 
+# Viability‡           exception__second_trimester 
+# Viability‡,†,Ω       exception__second_trimester 
+# ViabilityΩ           exception__second_trimester 
+# X                    yes                         
+# X*                   yes                         
+# X* ,Ω                yes                         
+# Xξ                   yes                         
+# XΩ                   yes                         
+# XФ                   yes                         
+# ϴ                    exception                   
+# NA                                               
+
+regs <- regs %>%
   select(
     -state_law
   ) %>%
@@ -194,80 +285,51 @@ regs <- regs %>%
     values_from = state_law_condensed
   ) %>%
   mutate(
-    across(!state, .fns = ~ifelse(.x == "", "none", .x))
+    across(!state, .fns = ~ ifelse(.x == "", "none", .x))
   )
 
-# Correspondence analysis ---------------------------------
-
-regs <- tibble::column_to_rownames(regs, "state")
-
-regs_mca <- FactoMineR::MCA(regs, ncp = 10, graph = FALSE)
-
-# 
-factoextra::fviz_screeplot(regs_mca)
-
 "
-~4 dimensions (~50% variance) look reasonable
+Compare California and Texas again
 "
 
-# https://osf.io/kthnf/
-# https://osf.io/2aczd/
-
-
-
-factoextra::fviz_contrib(regs_mca, "var", axes = 1, top = 10)
-factoextra::fviz_mca_var(regs_mca, "var", axes = c(1, 2))
-factoextra::fviz_mca_biplot(regs_mca, axes = c(1, 2))
-
-loads <- regs_mca$ind$coord[, 1:4] %>%
-  data.frame() %>%
-  clean_names()
-
-factoextra::fviz_nbclust(loads, FUNcluster = factoextra::hcut, method = "wss")
-
-d <- dist(loads)
-hc <- hclust(d, method = "ward.D")
-dend <- as.dendrogram(hc)
-
-dend %>% color_branches(k = 5) %>% color_labels(k = 5) %>% set("labels_cex", .7) %>% set("branches_lwd", .5) %>% as.ggdend() %>% ggplot(horiz = TRUE)
-
-regs_tidy$cluster <- cutree(hc1, k = 4)
-
-km <- kmeans(loads[, -1], 8)
-loads$clu <- km$cluster
-loads$state <- ar$state
-
-# Population ----------------------------------------------
-
-pop <- read.delim("/Users/edwardgivens/Downloads/Single-Race Population Estimates 2010-2019 by State and Single-Year Age (21).txt")
-
-pop <- clean_names(pop)
-pop$race_ethnicity <- with(pop, paste(race, ethnicity, sep = " "))
-
-pop %>%
-  group_by(
-    states,
-    race_ethnicity,
-    five_year_age_groups_code
-  ) %>%
-  summarize(
-    n_race_age = sum(population)
-  ) %>%
-  group_by(
-    states
-  ) %>%
-  mutate(
-    n_total = sum(n_race_age)
-  ) %>%
+regs %>%
   filter(
-    race_ethnicity == "White Not Hispanic or Latino" &
-    five_year_age_groups_code %in% c("15-19", "20-24", "25-29", "30-34", "35-39")
+    state %in% c("CA", "TX")
   ) %>%
-  group_by(
-    states
-  ) %>%
-  summarize(
-    n_race_age = sum(n_race_age),
-    n_total = max(n_total),
-    per_race_age = n_race_age / n_total
+  kable(
+    "simple"
   )
+
+# state   must_be_performed_by_a_licensed_physician   must_be_performed_in_a_hospital_if_at   second_physician_must_participate_if_at   prohibited_except_in_cases_of_life_or_health_endangerment_if_at   partial_birth_abortion_banned   public_funding_of_abortion_funds_all_or_most_medically_necessary_abortions   public_funding_of_abortion_funds_limited_to_life_endangerment_rape_and_incest   private_insurance_coverage_limited   providers_may_refuse_to_participate_individual   providers_may_refuse_to_participate_institution   mandated_counseling_includes_information_on_breast_cancer_link   mandated_counseling_includes_information_on_fetal_pain   mandated_counseling_includes_information_on_negative_psychological_effects   waiting_period_in_hours_after_counseling   parental_involvement_required_for_minors 
+# ------  ------------------------------------------  --------------------------------------  ----------------------------------------  ----------------------------------------------------------------  ------------------------------  ---------------------------------------------------------------------------  ------------------------------------------------------------------------------  -----------------------------------  -----------------------------------------------  ------------------------------------------------  ---------------------------------------------------------------  -------------------------------------------------------  ---------------------------------------------------------------------------  -----------------------------------------  -----------------------------------------
+# CA      none                                        none                                    none                                      second_trimester                                                  none                            yes                                                                          none                                                                            none                                 yes                                              yes                                               none                                                             none                                                     none                                                                         none                                       enjoined                                 
+# TX      yes                                         none                                    none                                      exception__first_trimester                                        yes                             none                                                                         yes                                                                             yes                                  yes                                              yes                                               yes                                                              yes                                                      yes                                                                          yes                                        consent_and_notice                       
+
+glimpse(regs)
+
+# Rows: 51
+# Columns: 16
+# $ state                                                                         <chr> "AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "HI", "IA…
+# $ must_be_performed_by_a_licensed_physician                                     <chr> "yes", "yes", "yes", "yes", "none", "none", "none", "none", "none", "yes", …
+# $ must_be_performed_in_a_hospital_if_at                                         <chr> "none", "second_trimester", "none", "second_trimester", "none", "none", "se…
+# $ second_physician_must_participate_if_at                                       <chr> "none", "second_trimester", "second_trimester", "second_trimester", "none",…
+# $ prohibited_except_in_cases_of_life_or_health_endangerment_if_at               <chr> "none", "first_trimester", "exception__first_trimester", "second_trimester"…
+# $ partial_birth_abortion_banned                                                 <chr> "enjoined", "enjoined", "yes", "yes", "none", "none", "none", "none", "none…
+# $ public_funding_of_abortion_funds_all_or_most_medically_necessary_abortions    <chr> "yes", "none", "none", "none", "yes", "none", "yes", "none", "none", "none"…
+# $ public_funding_of_abortion_funds_limited_to_life_endangerment_rape_and_incest <chr> "none", "yes", "yes", "exception", "none", "yes", "none", "yes", "yes", "ye…
+# $ private_insurance_coverage_limited                                            <chr> "none", "none", "none", "yes", "none", "none", "none", "none", "none", "non…
+# $ providers_may_refuse_to_participate_individual                                <chr> "yes", "none", "yes", "yes", "yes", "none", "yes", "none", "yes", "yes", "y…
+# $ providers_may_refuse_to_participate_institution                               <chr> "yes", "none", "yes", "yes", "yes", "none", "none", "none", "yes", "yes", "…
+# $ mandated_counseling_includes_information_on_breast_cancer_link                <chr> "yes", "none", "none", "none", "none", "none", "none", "none", "none", "non…
+# $ mandated_counseling_includes_information_on_fetal_pain                        <chr> "yes", "none", "yes", "none", "none", "none", "none", "none", "none", "none…
+# $ mandated_counseling_includes_information_on_negative_psychological_effects    <chr> "none", "none", "none", "none", "none", "none", "none", "none", "none", "no…
+# $ waiting_period_in_hours_after_counseling                                      <chr> "none", "yes", "yes", "yes", "none", "none", "none", "none", "none", "enjoi…
+# $ parental_involvement_required_for_minors                                      <chr> "enjoined", "consent", "consent", "consent", "enjoined", "notice", "none", …
+
+# Export data to OSF ----------------------------------------------------------
+
+regs_path <- file.path(tempdir(), "abortion-regs-by-state.csv")
+write.csv(regs, regs_path, row.names = FALSE)
+
+project_data <- osf_retrieve_node("pcaj6")
+osf_upload(project_data, regs_path, conflicts = "overwrite")
