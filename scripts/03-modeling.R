@@ -237,37 +237,3 @@ km <- kmeans(loads[, -1], 8)
 loads$clu <- km$cluster
 loads$state <- ar$state
 
-# Population ----------------------------------------------
-
-pop <- read.delim("/Users/edwardgivens/Downloads/Single-Race Population Estimates 2010-2019 by State and Single-Year Age (21).txt")
-
-pop <- clean_names(pop)
-pop$race_ethnicity <- with(pop, paste(race, ethnicity, sep = " "))
-
-pop %>%
-  group_by(
-    states,
-    race_ethnicity,
-    five_year_age_groups_code
-  ) %>%
-  summarize(
-    n_race_age = sum(population)
-  ) %>%
-  group_by(
-    states
-  ) %>%
-  mutate(
-    n_total = sum(n_race_age)
-  ) %>%
-  filter(
-    race_ethnicity == "White Not Hispanic or Latino" &
-    five_year_age_groups_code %in% c("15-19", "20-24", "25-29", "30-34", "35-39")
-  ) %>%
-  group_by(
-    states
-  ) %>%
-  summarize(
-    n_race_age = sum(n_race_age),
-    n_total = max(n_total),
-    per_race_age = n_race_age / n_total
-  )
